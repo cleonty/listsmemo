@@ -70,6 +70,7 @@ func DownloadFile(d int, f int) (htmlContent string, notFound bool, err error) {
 	}
 	if response.StatusCode == 404 {
 		notFound = true
+		log.Println("File ", file, "not found")
 		return
 	}
 	body, err := ioutil.ReadAll(response.Body)
@@ -194,14 +195,29 @@ func Download(dStart, dEnd int) {
 		}
 		f++
 	}
-	if len(allPersons) > 0 {
-		lines := strings.Split(allPersons[0].text, "\n")
-		log.Print(strings.Join(lines, "\n"))
-		log.Println(len(lines), lines)
+	if file != nil {
+		file.Close()
+		file = nil
 	}
 	log.Println("end")
 }
 
 func main() {
-	Download(36, 37)
+	var err error
+	dMin := 1
+	dMax := 1000
+	args := os.Args
+	if len(args) > 1 {
+		dMin, err = strconv.Atoi(args[1])
+		if err != nil {
+			log.Fatalln("First argument must be an integer", err)
+		}
+	}
+	if len(args) > 2 {
+		dMax, err = strconv.Atoi(args[2])
+		if err != nil {
+			log.Fatalln("Second argument must be an integer", err)
+		}
+	}
+	Download(dMin, dMax)
 }
