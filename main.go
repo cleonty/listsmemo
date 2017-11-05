@@ -2,7 +2,8 @@
 package main
 
 import (
-	"bytes"
+	_ "bytes"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -11,50 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/net/html"
-	"golang.org/x/text/encoding/charmap"
-	"gopkg.in/xmlpath.v2"
+	_ "golang.org/x/net/html"
+	_ "golang.org/x/text/encoding/charmap"
+	_ "gopkg.in/xmlpath.v2"
 )
 
-type Person struct {
-	name   string
-	d      int
-	f      int
-	n      string
-	author string
-	text   string
-}
-
-type Downloader struct {
-	parser *Parser
-}
-
-type Parser struct {
-	nPath      *xmlpath.Path
-	namePath   *xmlpath.Path
-	authorPath *xmlpath.Path
-	textPath   *xmlpath.Path
-}
-
-func NewParser() *Parser {
-	parser := &Parser{}
-	parser.nPath = xmlpath.MustCompile(`p/a/@name`)
-	parser.namePath = xmlpath.MustCompile(`p[@class="name"]`)
-	parser.authorPath = xmlpath.MustCompile(`p[@class="author"]`)
-	parser.textPath = xmlpath.MustCompile(`p[@class="cont"]`)
-	return parser
-}
-
-func (parser *Parser) ParsePerson(node *xmlpath.Node, person *Person) {
-	person.n, _ = parser.nPath.String(node)
-	person.name, _ = parser.namePath.String(node)
-	person.author, _ = parser.authorPath.String(node)
-	person.text, _ = parser.textPath.String(node)
-	person.text = strings.Replace(person.text, "\n\n\n", "\n", -1)
-	person.text = strings.Replace(person.text, "\n\n", "\n", -1)
-}
-
-func DownloadFile(d int, f int) (htmlContent string, notFound bool, err error) {
+func DownloadFile(d string, f string) (htmlContent string, notFound bool, err error) {
 	notFound = false
 	tr := &http.Transport{
 		MaxIdleConns:       10,
@@ -62,107 +25,98 @@ func DownloadFile(d int, f int) (htmlContent string, notFound bool, err error) {
 		DisableCompression: true,
 	}
 	client := &http.Client{Transport: tr}
-	file := "http://lists.memo.ru/d" + strconv.Itoa(d) + "/f" + strconv.Itoa(f) + ".htm"
-	log.Println("Downloading", file)
-	response, err := client.Get(file)
+	link := "http://lists.memo.ru/" + d + "/" + f + ".htm"
+	log.Println("Downloading", link)
+	response, err := client.Get(link)
 	if err != nil {
 		return
 	}
 	if response.StatusCode == 404 {
 		notFound = true
-		log.Println("File ", file, "not found")
+		log.Println("File ", link, "not found")
 		return
 	}
 	body, err := ioutil.ReadAll(response.Body)
 	if err != nil {
 		return
 	}
-	decoder := charmap.Windows1251.NewDecoder()
-	newBody := make([]byte, len(body)*2)
-	n, _, err := decoder.Transform(newBody, body, false)
-	if err != nil {
-		return
-	}
-	newBody = newBody[:n]
-	utf8Body := string(newBody)
-	reader := strings.NewReader(utf8Body)
-	root, err := html.Parse(reader)
-	if err != nil {
-		return
-	}
-	var b bytes.Buffer
-	html.Render(&b, root)
-	htmlContent = b.String()
-	htmlContent = strings.Replace(htmlContent, "windows-1251", "utf-8", 1)
+	sBody := string(body)
+	bodyStart := strings.Index(sBody, `<ul class="list-right">`) + len(`<ul class="list-right">`)
+	bodyEnd := strings.Index(sBody, "</ul>")
+	htmlContent = sBody[bodyStart:bodyEnd]
 	return
 }
 
-func ParsePerson(node *xmlpath.Node) (name, n, author, text string) {
-	aPath := xmlpath.MustCompile(`p/a/@name`)
-	namePath := xmlpath.MustCompile(`p[@class="name"]`)
-	authorPath := xmlpath.MustCompile(`p[@class="author"]`)
-	textPath := xmlpath.MustCompile(`p[@class="cont"]`)
-	n, _ = aPath.String(node)
-	name, _ = namePath.String(node)
-	author, _ = authorPath.String(node)
-	text, _ = textPath.String(node)
-	return
-}
-
-func HtmlToText(htmlContent string) (persons []Person, textContent string, err error) {
-	parser := NewParser()
-	reader := strings.NewReader(htmlContent)
-	xmlroot, err := xmlpath.ParseHTML(reader)
-	if err != nil {
-		return
-	}
-	var xpath string
-	xpath = `//ul[@class='list-right']/li`
-	path := xmlpath.MustCompile(xpath)
-	iter := path.Iter(xmlroot)
-	var buffer bytes.Buffer
-	for iter.Next() {
-		node := iter.Node()
-		person := Person{}
-		parser.ParsePerson(node, &person)
-		persons = append(persons, person)
-		buffer.WriteString(node.String())
-		buffer.WriteString("\n\n")
-	}
-	textContent = buffer.String()
-	//log.Println(persons)
-	return
-}
-
-func OpenDataFile(d int) *os.File {
-	htmlFile := "d" + strconv.Itoa(d) + ".html"
+func OpenDataFile(dtext string) *os.File {
+	htmlFile := dtext + ".html"
 	file, err := os.Create(htmlFile)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	err = WriteDataFileHeader(file)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	return file
 }
 
-func Download(dStart, dEnd int) {
-	var allPersons []Person
+func CloseDataFile(file *os.File) *os.File {
+	if file != nil {
+		defer file.Close()
+		err := WriteDataFileTrailer(file)
+		if err != nil {
+			log.Fatalln(err)
+		}
+	}
+	return nil
+}
+
+func WriteDataFileHeader(file *os.File) error {
+	header := strings.Join([]string{
+		`<html>`,
+		`<head>`,
+		`  <meta http-equiv="Content-Type" content="text/html; charset=windows-1251">`,
+		`  <title>lists.memo.ru</title>`,
+		`</head>`,
+		`<body>`,
+		`<ul>`,
+	}, "\n")
+	_, err := file.WriteString(header)
+	return err
+}
+
+func WriteDataFileTrailer(file *os.File) error {
+	header := strings.Join([]string{
+		`</ul>`,
+		`</body>`,
+		`</html>`,
+	}, "\n")
+	_, err := file.WriteString(header)
+	return err
+}
+
+func DownloadMainDatabase(dStart, dEnd int) {
 	d := dStart
 	f := 1
-	log.Println("begin")
+	log.Println("begin downloading main database")
 	var file *os.File
 	for d <= dEnd {
+		dtext := "d" + strconv.Itoa(d)
 		if file == nil {
-			file = OpenDataFile(d)
+			file = OpenDataFile(dtext)
 		}
-		html, notFound, err := DownloadFile(d, f)
+		//		if f > 1 {
+		//			log.Println("no more than one file")
+		//			break
+		//		}
+		ftext := "f" + strconv.Itoa(f)
+		html, notFound, err := DownloadFile(dtext, ftext)
 		if err != nil {
 			log.Fatalln(err)
 		}
 		if notFound {
 			if f != 1 {
-				if file != nil {
-					file.Close()
-					file = nil
-				}
+				file = CloseDataFile(file)
 				d++
 				f = 1
 				continue
@@ -170,42 +124,49 @@ func Download(dStart, dEnd int) {
 				break
 			}
 		}
-		//htmlFile := "d" + strconv.Itoa(d) + "-f" + strconv.Itoa(f) + ".html"
 		_, err = file.WriteString(html)
 		if err != nil {
 			log.Fatalln(err)
 		}
-		convertToText := false
+		f++
+	}
+	file = CloseDataFile(file)
+	log.Println("end downloading main database")
+}
 
-		//err = ioutil.WriteFile(htmlFile, []byte(html), 0644)
-		//if err != nil {
-		//	log.Fatalln(err)
-		//}
-		if convertToText {
-			persons, text, err := HtmlToText(html)
-			if err != nil {
-				log.Fatalln(err)
-			}
-			allPersons = append(allPersons, persons...)
-			textFile := "d" + strconv.Itoa(d) + "-f" + strconv.Itoa(f) + ".txt"
-			err = ioutil.WriteFile(textFile, []byte(text), 0644)
-			if err != nil {
-				log.Fatalln(err)
-			}
+func DownloadUpdate() {
+	f := 1
+	dtext := "dnew"
+	log.Println("begin downloading updates")
+	file := OpenDataFile(dtext)
+	defer CloseDataFile(file)
+	for {
+		//		if f > 1 {
+		//			log.Println("no more than one file")
+		//			break
+		//		}
+		ftext := fmt.Sprintf("f%03d", f)
+		html, notFound, err := DownloadFile(dtext, ftext)
+		if err != nil {
+			log.Fatalln(err)
+		}
+		if notFound {
+			break
+		}
+		_, err = file.WriteString(html)
+		if err != nil {
+			log.Fatalln(err)
 		}
 		f++
 	}
-	if file != nil {
-		file.Close()
-		file = nil
-	}
-	log.Println("end")
+	log.Println("end downloading updates")
 }
 
 func main() {
 	var err error
 	dMin := 1
 	dMax := 1000
+	downloadUpdate := true
 	args := os.Args
 	if len(args) > 1 {
 		dMin, err = strconv.Atoi(args[1])
@@ -219,5 +180,11 @@ func main() {
 			log.Fatalln("Second argument must be an integer", err)
 		}
 	}
-	Download(dMin, dMax)
+	DownloadMainDatabase(dMin, dMax)
+	if len(args) > 3 {
+		downloadUpdate = 0 == strings.Compare(args[3], "yes")
+	}
+	if downloadUpdate {
+		DownloadUpdate()
+	}
 }
