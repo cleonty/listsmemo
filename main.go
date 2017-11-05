@@ -14,7 +14,7 @@ import (
 
 	_ "golang.org/x/net/html"
 	_ "golang.org/x/text/encoding/charmap"
-	_ "gopkg.in/xmlpath.v2"
+	"gopkg.in/xmlpath.v2"
 )
 
 func DownloadFile(d string, f string) (htmlContent string, notFound bool, err error) {
@@ -47,23 +47,32 @@ func DownloadFile(d string, f string) (htmlContent string, notFound bool, err er
 	return
 }
 
-func OpenDataFile(dtext string) *os.File {
+func OpenHtmlDataFile(dtext string) *os.File {
 	htmlFile := dtext + ".html"
 	file, err := os.Create(htmlFile)
 	if err != nil {
 		log.Fatalln(err)
 	}
-	err = WriteDataFileHeader(file)
+	err = WriteHtmlDataFileHeader(file)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	return file
 }
 
-func CloseDataFile(file *os.File) *os.File {
+func OpenTextDataFile(dtext string) *os.File {
+	htmlFile := dtext + ".txt"
+	file, err := os.Create(htmlFile)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	return file
+}
+
+func CloseHtmlDataFile(file *os.File) *os.File {
 	if file != nil {
 		defer file.Close()
-		err := WriteDataFileTrailer(file)
+		err := WriteHtmlDataFileTrailer(file)
 		if err != nil {
 			log.Fatalln(err)
 		}
@@ -71,7 +80,23 @@ func CloseDataFile(file *os.File) *os.File {
 	return nil
 }
 
-func WriteDataFileHeader(file *os.File) error {
+func CloseTextDataFile(file *os.File) *os.File {
+	if file != nil {
+		file.Close()
+	}
+	return nil
+}
+
+func HtmlToText(html string) string {
+	reader := strings.NewReader(html)
+	root, err := xmlpath.ParseHTML(reader)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	return root.String()
+}
+
+func WriteHtmlDataFileHeader(file *os.File) error {
 	header := strings.Join([]string{
 		`<html>`,
 		`<head>`,
@@ -85,7 +110,7 @@ func WriteDataFileHeader(file *os.File) error {
 	return err
 }
 
-func WriteDataFileTrailer(file *os.File) error {
+func WriteHtmlDataFileTrailer(file *os.File) error {
 	header := strings.Join([]string{
 		`</ul>`,
 		`</body>`,
@@ -99,11 +124,15 @@ func DownloadMainDatabase(dStart, dEnd int) {
 	d := dStart
 	f := 1
 	log.Println("begin downloading main database")
-	var file *os.File
+	var htmlFile *os.File
+	var textFile *os.File
 	for d <= dEnd {
 		dtext := "d" + strconv.Itoa(d)
-		if file == nil {
-			file = OpenDataFile(dtext)
+		if htmlFile == nil {
+			htmlFile = OpenHtmlDataFile(dtext)
+		}
+		if textFile == nil {
+			textFile = OpenTextDataFile(dtext)
 		}
 		//		if f > 1 {
 		//			log.Println("no more than one file")
@@ -116,7 +145,8 @@ func DownloadMainDatabase(dStart, dEnd int) {
 		}
 		if notFound {
 			if f != 1 {
-				file = CloseDataFile(file)
+				htmlFile = CloseHtmlDataFile(htmlFile)
+				textFile = CloseTextDataFile(textFile)
 				d++
 				f = 1
 				continue
@@ -124,13 +154,18 @@ func DownloadMainDatabase(dStart, dEnd int) {
 				break
 			}
 		}
-		_, err = file.WriteString(html)
+		_, err = htmlFile.WriteString(html)
+		if err != nil {
+			log.Fatalln(err)
+		}
+		text := HtmlToText(html)
+		_, err = textFile.WriteString(text)
 		if err != nil {
 			log.Fatalln(err)
 		}
 		f++
 	}
-	file = CloseDataFile(file)
+	htmlFile = CloseHtmlDataFile(htmlFile)
 	log.Println("end downloading main database")
 }
 
@@ -138,8 +173,10 @@ func DownloadUpdate() {
 	f := 1
 	dtext := "dnew"
 	log.Println("begin downloading updates")
-	file := OpenDataFile(dtext)
-	defer CloseDataFile(file)
+	htmlFile := OpenHtmlDataFile(dtext)
+	textFile := OpenTextDataFile(dtext)
+	defer CloseHtmlDataFile(htmlFile)
+	defer CloseTextDataFile(htmlFile)
 	for {
 		//		if f > 1 {
 		//			log.Println("no more than one file")
@@ -153,7 +190,12 @@ func DownloadUpdate() {
 		if notFound {
 			break
 		}
-		_, err = file.WriteString(html)
+		_, err = htmlFile.WriteString(html)
+		if err != nil {
+			log.Fatalln(err)
+		}
+		text := HtmlToText(html)
+		_, err = textFile.WriteString(text)
 		if err != nil {
 			log.Fatalln(err)
 		}
